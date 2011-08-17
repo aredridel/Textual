@@ -180,7 +180,8 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note
 {
-	[window makeFirstResponder:text];
+    [world focusInputText];
+    
 	[window makeKeyAndOrderFront:nil];
 	
 	if (world.clients.count < 1) {
@@ -603,11 +604,6 @@
 		[sf appendString:NSNewlineCharacter];
 	}
 	
-	if (viewTheme.other.overrideMessageIndentWrap) {
-		[sf appendString:TXTLS(@"THEME_CHANGE_OVERRIDE_PROMPT_INDENT_WRAPPED")];
-		[sf appendString:NSNewlineCharacter];
-	}
-	
 	if ([Preferences rightToLeftFormatting]) {
 		[text setBaseWritingDirection:NSWritingDirectionRightToLeft];
 	} else {
@@ -682,7 +678,7 @@
 		return;
 	}
 	
-	if (NSDissimilarObjects([window firstResponder], [window fieldEditor:NO forObject:text])) {
+	if ([text isFocused] == NO) {
 		[world focusInputText];
 	}
 	
@@ -778,11 +774,12 @@
 	
 	if (commandMode) {
 		choices = [NSMutableArray array];
-		for (NSString *command in [[Preferences commandIndexList] allKeys]) {
+        
+		for (NSString *command in [Preferences commandIndexList].allKeys) {
 			[choices safeAddObject:[command lowercaseString]];
 		}
 		
-		for (NSString *command in [[world bundlesForUserInput] allKeys]) {
+		for (NSString *command in [world bundlesForUserInput].allKeys) {
 			NSString *cmdl = [command lowercaseString];
 			
 			if ([choices containsObject:cmdl] == NO) {
@@ -794,6 +791,10 @@
 		
         if (NSObjectIsNotEmpty(resourceFiles)) {
             for (NSString *file in resourceFiles) {
+                if ([file hasPrefix:@"."] || [file hasSuffix:@".rtf"]) {
+                    continue;
+                }
+                
                 NSArray     *parts = [NSArray arrayWithArray:[file componentsSeparatedByString:@"."]];
                 NSString    *cmdl  = [[parts stringAtIndex:0] lowercaseString];
                 
@@ -807,6 +808,10 @@
         
         if (NSObjectIsNotEmpty(resourceFiles)) {
             for (NSString *file in resourceFiles) {
+                if ([file hasPrefix:@"."] || [file hasSuffix:@".rtf"]) {
+                    continue;
+                }
+                
                 NSArray     *parts = [NSArray arrayWithArray:[file componentsSeparatedByString:@"."]];
                 NSString    *cmdl  = [[parts stringAtIndex:0] lowercaseString];
                 
@@ -1232,6 +1237,18 @@ typedef enum {
 	}
 }
 
+- (void)exitFullscreenMode:(NSEvent *)e
+{
+    if (menu.isInFullScreenMode) {
+        [menu wantsFullScreenModeToggled:nil];
+    }
+}
+
+- (void)focusWebview
+{
+    [window makeFirstResponder:world.selected.log.view];
+}
+
 - (void)handler:(SEL)sel code:(NSInteger)keyCode mods:(NSUInteger)mods
 {
 	[window registerKeyHandler:sel key:keyCode modifiers:mods];
@@ -1256,6 +1273,8 @@ typedef enum {
 {
 	[window		setKeyHandlerTarget:self];
 	[text       setKeyHandlerTarget:self];
+    
+    [self handler:@selector(exitFullscreenMode:) code:KEY_ESCAPE mods:0];
 	
 	[self handler:@selector(tab:)		code:KEY_TAB mods:0];
 	[self handler:@selector(shiftTab:)	code:KEY_TAB mods:NSShiftKeyMask];
@@ -1271,6 +1290,8 @@ typedef enum {
 	
 	[self handler:@selector(inputHistoryUp:)	char:'p' mods:NSControlKeyMask];
 	[self handler:@selector(inputHistoryDown:)	char:'n' mods:NSControlKeyMask];
+    
+    [self inputHandler:@selector(focusWebview) char:'l' mods:(NSControlKeyMask | NSCommandKeyMask)];
     
 	[self inputHandler:@selector(inputHistoryUp:) code:KEY_UP mods:0];
 	[self inputHandler:@selector(inputHistoryUp:) code:KEY_UP mods:NSAlternateKeyMask];

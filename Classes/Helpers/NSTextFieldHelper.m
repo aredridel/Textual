@@ -10,14 +10,9 @@
 
 - (void)focus
 {
-    if ([self isFocused] == NO) {
-        [self.window makeFirstResponder:self];
-        
-        NSRange newRange = NSMakeRange([self stringLength], 0);
-        
-        [self setSelectedRange:newRange];
-        [self scrollRangeToVisible:newRange];
-    }
+    NSWindow *win = [NSApp keyWindow];
+    
+    [win makeFirstResponder:self];
 }
 
 - (NSRange)fullSelectionRange
