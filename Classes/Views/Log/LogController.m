@@ -52,6 +52,7 @@
 @synthesize urlMenu;
 @synthesize view;
 @synthesize world;
+@synthesize messageQueue;
 
 - (id)init
 {
@@ -63,6 +64,10 @@
 		
 		[[WebPreferences standardPreferences] setCacheModel:WebCacheModelDocumentViewer];
 		[[WebPreferences standardPreferences] setUsesPageCache:NO];
+        
+        NSString *uuid = [NSString stringWithUUID];
+        
+        messageQueue = dispatch_queue_create([uuid UTF8String], NULL);
 	}
 	
 	return self;
@@ -85,6 +90,9 @@
 	[memberMenu drain];
 	[autoScroller drain];
 	[highlightedLineNumbers drain];
+    
+    dispatch_release(messageQueue);
+    messageQueue = NULL;
 	
 	[super dealloc];
 }
@@ -157,6 +165,17 @@
     [world focusInputText];
 }
 
+- (void)queueLoop
+{
+    if ([view isLoading]) {
+        while ([view isLoading] && PointerIsEmpty([self mainFrameDocument])) {
+            [NSThread sleepForTimeInterval:0.2];
+            
+            continue;
+        }
+    }
+}
+
 - (void)notifyDidBecomeVisible
 {
 	if (becameVisible == NO) {
@@ -198,34 +217,31 @@
 	return [(id)[self topic:doc] innerHTML];
 }
 
-- (BOOL)setTopicWithoutDelay:(NSString *)topic
-{
-	if (NSObjectIsNotEmpty(topic)) {
-		if ([[self topicValue] isEqualToString:topic] == NO) {
-			NSString *body = [LogRenderer renderBody:topic 
-										  controller:nil
-										  renderType:ASCII_TO_HTML 
-										  properties:[NSDictionary dictionaryWithObjectsAndKeys:NSNumberWithBOOL(YES), @"renderLinks", nil]
-										  resultInfo:NULL];
-			
-			DOMDocument *doc = [self mainFrameDocument];
-			if (PointerIsEmpty(doc)) return NO;
-			
-			DOMElement *topic_body = [self topic:doc];
-			if (PointerIsEmpty(topic_body)) return NO;
-			
-			[(id)topic_body setInnerHTML:body];
-		}
-	}
-	
-	return YES;
-}
-
 - (void)setTopic:(NSString *)topic 
 {
-	if ([self setTopicWithoutDelay:topic] == NO) {
-		[self performSelector:@selector(setTopicWithoutDelay:) withObject:topic afterDelay:2.0];
-	}
+    dispatch_async(messageQueue, ^{
+        [self queueLoop];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+          	if (NSObjectIsNotEmpty(topic)) {
+                if ([[self topicValue] isEqualToString:topic] == NO) {
+                    NSString *body = [LogRenderer renderBody:topic 
+                                                  controller:nil
+                                                  renderType:ASCII_TO_HTML 
+                                                  properties:[NSDictionary dictionaryWithObjectsAndKeys:NSNumberWithBOOL(YES), @"renderLinks", nil]
+                                                  resultInfo:NULL];
+                    
+                    DOMDocument *doc = [self mainFrameDocument];
+                    if (PointerIsEmpty(doc)) return;
+                    
+                    DOMElement *topic_body = [self topic:doc];
+                    if (PointerIsEmpty(topic_body)) return;
+                    
+                    [(id)topic_body setInnerHTML:body];
+                }
+            }
+        });
+    });
 }
 
 - (void)moveToTop
@@ -296,43 +312,54 @@
 
 - (void)mark
 {
-	if (loaded == NO) return;
-	
-	[self savePosition];
-	[self unmark];
-	
-	DOMDocument *doc = [self mainFrameDocument];
-	if (PointerIsEmpty(doc)) return;
-	
-	DOMElement *body = [self body:doc];
-	
-	if (body) {
-		DOMElement *e = [doc createElement:@"div"];
-		
-		[e setAttribute:@"id" value:@"mark"];
-		
-		[body appendChild:e];
-		
-		++count;
-		
-		[self restorePosition];
-	}
+    dispatch_async(messageQueue, ^{
+        [self queueLoop];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (loaded == NO) return;
+            
+            [self savePosition];
+            
+            DOMDocument *doc = [self mainFrameDocument];
+            if (PointerIsEmpty(doc)) return;
+            
+            DOMElement *body = [self body:doc];
+            
+            if (body) {
+                DOMElement *e = [doc createElement:@"div"];
+                
+                [e setAttribute:@"id" value:@"mark"];
+                
+                [body appendChild:e];
+                
+                ++count;
+                
+                [self restorePosition];
+            }
+        });
+    });
 }
 
 - (void)unmark
 {
-	if (loaded == NO) return;
-	
-	DOMDocument *doc = [self mainFrameDocument];
-	if (PointerIsEmpty(doc)) return;
-	
-	DOMElement *e = [doc getElementById:@"mark"];
-	
-	if (e) {
-		[[e parentNode] removeChild:e];
-		
-		--count;
-	}
+    dispatch_async(messageQueue, ^{
+        [self queueLoop];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (loaded == NO) return;
+            
+            DOMDocument *doc = [self mainFrameDocument];
+            if (PointerIsEmpty(doc)) return;
+            
+            DOMElement *e = [doc getElementById:@"mark"];
+            
+            if (e) {
+                [[e parentNode] removeChild:e];
+                
+                --count;
+            }
+        });
+    });
 }
 
 - (void)goToMark
@@ -626,9 +653,7 @@
 	[attrs setObject:((highlighted) ? @"true" : @"false")		forKey:@"highlight"];
 	[attrs setObject:((isText) ? @"line text" : @"line event")	forKey:@"class"];
     
-    dispatch_async(world.messageQueue, ^{
-        [self writeLine:s attributes:attrs];
-    });
+    [self writeLine:s attributes:attrs];
     
 	if (highlighted) {
 		NSString *messageBody;
@@ -652,48 +677,46 @@
 
 - (void)writeLine:(NSString *)aHtml attributes:(NSDictionary *)attrs
 {
-    while ([view isLoading]) {
-        [NSThread sleepForTimeInterval:0.2];
+    dispatch_async(messageQueue, ^{
+        [self queueLoop];
         
-        continue;
-    }
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [self savePosition];
-        
-        ++lineNumber;
-        ++count;
-        
-        DOMDocument *doc  = [self mainFrameDocument];
-        DOMElement  *body = [self body:doc];
-        DOMElement  *div  = [doc createElement:@"div"];
-        
-        [(id)div setInnerHTML:aHtml];
-        
-        for (NSString *key in attrs) {
-            NSString *value = [attrs objectForKey:key];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self savePosition];
             
-            [div setAttribute:key value:value];
-        }
-        
-        [div setAttribute:@"id" value:[NSString stringWithFormat:@"line%d", lineNumber]];
-        
-        [body appendChild:div];
-        
-        if (maxLines > 0 && (count - 10) > maxLines) {
-            [self setNeedsLimitNumberOfLines];
-        }
-        
-        if ([[attrs objectForKey:@"highlight"] isEqualToString:@"true"]) {
-            [highlightedLineNumbers safeAddObject:[NSNumber numberWithInt:lineNumber]];
-        }
-        
-        WebScriptObject *js_api = [view js_api];
-        
-        if (js_api && [js_api isKindOfClass:[WebUndefined class]] == NO) {
-            [js_api callWebScriptMethod:@"newMessagePostedToDisplay" 
-                          withArguments:[NSArray arrayWithObjects:NSNumberWithInteger(lineNumber), nil]];  
-        }
+            ++lineNumber;
+            ++count;
+            
+            DOMDocument *doc  = [self mainFrameDocument];
+            DOMElement  *body = [self body:doc];
+            DOMElement  *div  = [doc createElement:@"div"];
+            
+            [(id)div setInnerHTML:aHtml];
+            
+            for (NSString *key in attrs) {
+                NSString *value = [attrs objectForKey:key];
+                
+                [div setAttribute:key value:value];
+            }
+            
+            [div setAttribute:@"id" value:[NSString stringWithFormat:@"line%d", lineNumber]];
+            
+            [body appendChild:div];
+            
+            if (maxLines > 0 && (count - 10) > maxLines) {
+                [self setNeedsLimitNumberOfLines];
+            }
+            
+            if ([[attrs objectForKey:@"highlight"] isEqualToString:@"true"]) {
+                [highlightedLineNumbers safeAddObject:[NSNumber numberWithInt:lineNumber]];
+            }
+            
+            WebScriptObject *js_api = [view js_api];
+            
+            if (js_api && [js_api isKindOfClass:[WebUndefined class]] == NO) {
+                [js_api callWebScriptMethod:@"newMessagePostedToDisplay" 
+                              withArguments:[NSArray arrayWithObjects:NSNumberWithInteger(lineNumber), nil]];  
+            }
+        });
     });
 }
 
